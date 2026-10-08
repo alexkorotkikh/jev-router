@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Runs coding CLIs and routes each turn to the cheapest sufficient model using TypeSafe Jev",
   "type": "module",
   "repository": {
@@ -12,6 +12,7 @@
   "bin": {
     "jev-claude": "bin/jev-claude.mjs",
     "jev-codex": "bin/jev-codex.mjs",
+    "jev-opencode": "bin/jev-opencode.mjs",
     "jev-explain": "bin/jev-explain.mjs"
   },
   "scripts": {
@@ -21,6 +22,7 @@
   "files": [
     ".claude/skills",
     "bin",
+    "opencode-plugin",
     "skills",
     "src",
     "README.md"
@@ -29,6 +31,7 @@
     "claude",
     "claude-code",
     "codex",
+    "opencode",
     "model-routing",
     "jev",
     "typesafe"

@@ -1,6 +1,6 @@
 # jev-router
 
-Automatic per-turn model routing for Claude Code and OpenAI Codex. Jev sends simple work to
+Automatic per-turn model routing for Claude Code, OpenAI Codex, and OpenCode. Jev sends simple work to
 the fast tier and difficult work to the strong tier, while preserving each CLI's native
 interface, tools, sessions, permissions, and authentication.
 
@@ -8,14 +8,16 @@ interface, tools, sessions, permissions, and authentication.
 | --- | --- | --- | --- |
 | `jev-claude` | Claude Code | Existing `claude login` | Status line |
 | `jev-codex` | OpenAI Codex | Existing `codex login` | Commentary line |
+| `jev-opencode` | OpenCode | Existing connected providers | Decision history |
 
-Both commands launch the real upstream CLI. Jev only chooses the model for a fresh user turn.
+All commands launch the real upstream CLI. Jev only chooses the model for a fresh user turn.
 
 ## Quick start
 
 Requires Node.js 20.12+ and at least one supported CLI:
-[Claude Code](https://code.claude.com/docs/en/setup) or
-[OpenAI Codex](https://developers.openai.com/codex/cli).
+[Claude Code](https://code.claude.com/docs/en/setup),
+[OpenAI Codex](https://developers.openai.com/codex/cli), or
+[OpenCode](https://opencode.ai/v2/docs/).
 
 ### 1. npm package
 
@@ -46,6 +48,7 @@ repository:
 ```bash
 jev-claude
 jev-codex
+jev-opencode
 ```
 
 No Anthropic or OpenAI API key is required when the corresponding CLI is already logged in
@@ -56,10 +59,12 @@ jev-claude --resume
 jev-claude -p "fix the failing test"
 jev-codex resume --last
 jev-codex exec "fix the failing test"
+jev-opencode --continue
+jev-opencode run "fix the failing test"
 ```
 
-For a local checkout, `npm link` installs both commands. Without it, run
-`node bin/jev-claude.mjs` or `node bin/jev-codex.mjs`.
+For a local checkout, `npm link` installs all three commands. Without it, run the matching
+file under `bin/` with Node.js.
 
 ## Claude Code interface
 
@@ -112,7 +117,7 @@ the explanation skill does not ask Jev to score the prompt again.
 
 ### Explanation data location
 
-Both `jev-claude` and `jev-codex` keep up to 20 recent routing exchanges in one JSON file per
+All three launchers keep up to 20 recent routing exchanges in one JSON file per
 CLI session under Node.js's operating-system temporary directory:
 
 | Platform | Default location |
@@ -128,7 +133,8 @@ node -e "console.log(require('node:path').join(require('node:os').tmpdir(), 'jev
 ```
 
 Claude filenames use Claude Code's session UUID. Codex filenames use
-`codex-<jev-codex-process-id>.json`. These temporary files contain prompt text and Jev's exact
+`codex-<jev-codex-process-id>.json`; OpenCode filenames use `opencode-<session-id>.json`.
+These temporary files contain prompt text and Jev's exact
 request and response, so they are readable only by you (the directory is created with mode 700 and each
 file with 600). Files not updated for 7 days are deleted automatically, and the operating system
 may also remove them during normal temporary-file cleanup.
@@ -157,6 +163,22 @@ Codex's footer shows `jev-router` because it displays the selected picker entry,
 not the model chosen behind that provider. If Jev is unavailable, the commentary names the
 fallback model and explains how to set `JEV_API_KEY`.
 
+## OpenCode interface
+
+`jev-opencode` launches the real OpenCode CLI with a temporary **Jev Router** provider and
+plugin. The plugin routes at prompt admission, before OpenCode resolves the model, so OpenCode
+continues to use its own provider connections, credentials, tools, sessions, and permissions.
+Both OpenCode v1 and v2 plugin APIs are supported.
+
+By default, Jev routes among recognized models from one connected provider. Provider preference
+is Anthropic, OpenAI, GitHub Copilot, OpenCode, Google, then OpenRouter; set
+`JEV_OPENCODE_PROVIDER` to choose explicitly. Selecting a different concrete model pauses
+routing. Selecting `Jev Router / auto` resumes it.
+
+Interactive sessions and `run`/`mini` use a private OpenCode service so the temporary plugin is
+guaranteed to load. An explicit `--server` points at a remote service where a local plugin cannot
+run, so `jev-opencode` warns and passes through without routing.
+
 ## How it works
 
 Each command starts a loopback proxy, launches the real CLI, and forwards the CLI's existing
@@ -170,11 +192,15 @@ you -> Claude Code -> jev-claude proxy -> Anthropic
 you -> OpenAI Codex -> jev-codex proxy -> OpenAI
                          |
                          +-> Jev: choose a tier
+
+you -> OpenCode -> jev-opencode plugin -> connected provider
+                      |
+                      +-> Jev: choose a model
 ```
 
 Claude Code uses `ANTHROPIC_BASE_URL`; Codex uses a temporary custom provider with
-`requires_openai_auth=true`. Claude and Codex both use `jev-router` as the
-routing sentinel.
+`requires_openai_auth=true`. Claude and Codex use `jev-router` as the routing sentinel;
+OpenCode uses `jev/auto`.
 Any concrete model selected by the user passes through unchanged.
 
 ## Routing policy
@@ -213,12 +239,17 @@ sub-agents are pinned separately. Routing is fail-open: Jev failure never blocks
 | `JEV_CODEX_BALANCED_MODEL` | Codex | Balanced model; defaults to `gpt-5.6-terra`. |
 | `JEV_CODEX_STRONG_MODEL` | Codex | Strong model; defaults to `gpt-5.6-sol`. |
 | `JEV_CODEX_LONG_MODEL` | Codex | Long model; defaults to `gpt-6-astra`. |
+| `JEV_OPENCODE_PROVIDER` | OpenCode | Connected provider whose models Jev may route among. |
+| `JEV_OPENCODE_FAST_MODEL` | OpenCode | Exact fast model as `provider/model`. |
+| `JEV_OPENCODE_BALANCED_MODEL` | OpenCode | Exact balanced model as `provider/model`. |
+| `JEV_OPENCODE_STRONG_MODEL` | OpenCode | Exact strong model as `provider/model`. |
+| `JEV_OPENCODE_LONG_MODEL` | OpenCode | Exact opt-in long model as `provider/model`. |
 
 Existing environment variables have highest precedence, followed by `.env` in the launch
 directory, `~/.jev-router.env`, and the legacy `~/.jev-claude.env`.
 
 Tier definitions, Jev's question, confidence thresholds, and timeouts live in `src/config.mjs`.
-Both launchers send Jev the exact models in the signed-in account's native catalog, so model
+All launchers send Jev the exact models in the signed-in account's native catalog, so model
 versions such as `claude-opus-4-8` and `claude-opus-5` remain separate choices. Static model
 ids are used only until the CLI fetches its catalog.
 
@@ -244,6 +275,7 @@ npm test
 node test/live-routing.mjs
 node bin/jev-claude.mjs -p "what is 2+2?"
 node bin/jev-codex.mjs exec "what is 2+2?"
+node bin/jev-opencode.mjs run "what is 2+2?"
 ```
 
 The test suite covers shared policy, both request formats, model rewriting, capability
@@ -256,7 +288,9 @@ injection, and decision display.
 - Jev adds latency only to the first request of a turn; tool-loop continuations add none.
 - Claude Code and Codex request formats are not public contracts. Use `JEV_DUMP` to diagnose
   upstream changes.
-- Developed and tested on Windows against Claude Code v2.1.101 and OpenAI Codex v0.154.0.
+- OpenCode support is tested against both plugin contracts and smoke-tested with OpenCode v2.0.20.
+- Claude Code and Codex support was developed and tested on Windows against Claude Code v2.1.101
+  and OpenAI Codex v0.154.0.
 
 ## Contributing
 

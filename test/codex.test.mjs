@@ -8,6 +8,7 @@ import {
   addJevModel,
   applyCodexTier,
   codexConversationKey,
+  codexModelOf,
   codexModels,
   codexNewTurnPrompt,
   isCodexAuxiliaryPrompt,
@@ -262,4 +263,44 @@ test("proxy preserves Codex auth, picker, routing, and native decision output", 
   assert.equal(routeCalls, 1);
   assert.equal(seen[3].body.model, "gpt-5.6-sol");
   assert.equal(readStatus(statusId).metrics.reasoningRequired, 0.91);
+});
+
+test("a routing error keeps the current model instead of forwarding the sentinel", async (t) => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      if (req.method === "POST") seen.push(JSON.parse(Buffer.concat(chunks)));
+      res.end("");
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const upstreamURL = `http://127.0.0.1:${upstream.address().port}`;
+  const { port, close } = await startCodexProxy({
+    chatgptBaseURL: `${upstreamURL}/backend-api/codex`,
+    apiBaseURL: `${upstreamURL}/v1`,
+    route: async () => {
+      throw new Error("routing exploded");
+    },
+    statusId: `codex-throw-${process.pid}`,
+  });
+  t.after(close);
+
+  await fetch(`http://127.0.0.1:${port}/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "chatgpt-account-id": "acct" },
+    body: JSON.stringify({
+      model: "jev-router",
+      prompt_cache_key: "throws",
+      input: [
+        { type: "additional_tools", role: "developer", tools: [{}] },
+        { role: "user", content: [{ type: "input_text", text: "ping" }] },
+      ],
+    }),
+  }).then((r) => r.text());
+
+  assert.notEqual(seen[0].model, "jev-router");
+  assert.equal(seen[0].model, codexModelOf("opus"));
 });

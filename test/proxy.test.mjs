@@ -56,7 +56,9 @@ test("stale status files are pruned and fresh ones kept", () => {
   writeFileSync(fresh, "{}");
   const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
   utimesSync(stale, old, old);
-  assert.ok(pruneStale() >= 1);
+  // Test files run in parallel processes that share STATUS_DIR, and each prunes it on its first
+  // write, so a sibling may delete the stale file first; assert the outcome, not who did it.
+  pruneStale();
   assert.equal(existsSync(stale), false);
   assert.equal(existsSync(fresh), true);
 });
@@ -354,4 +356,40 @@ test("the same opening text in two sessions gets two keys", () => {
 test("the key survives metadata that is not JSON", () => {
   const body = { metadata: { user_id: "not-json" }, messages: [{ role: "user", content: "hi" }] };
   assert.doesNotThrow(() => conversationKey(body));
+});
+
+test("a routing error keeps the current model instead of forwarding the sentinel", async (t) => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      seen.push(JSON.parse(Buffer.concat(chunks)));
+      res.setHeader("content-type", "application/json");
+      res.end('{"id":"msg_1","type":"message"}');
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+
+  const { port, close } = await startProxy({
+    upstreamURL: `http://127.0.0.1:${upstream.address().port}`,
+    route: async () => {
+      throw new Error("routing exploded");
+    },
+  });
+  t.after(close);
+
+  await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "jev-router",
+      tools: [{ name: "Bash" }],
+      messages: [{ role: "user", content: `ping ${process.pid}` }],
+    }),
+  });
+
+  assert.notEqual(seen[0].model, "jev-router");
+  assert.equal(tierOf(seen[0].model), "opus");
 });

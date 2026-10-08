@@ -2,8 +2,10 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import {
   COMPLEXITY_MAX_SCORE,
   CONTEXT_WINDOW_TOKENS,
-  QUESTIONS,
   questionForModels,
+  questionsFor,
+  resolveTaskType,
+  TASK_TYPES,
   THRESHOLDS,
 } from "./config.mjs";
 import { log } from "./log.mjs";
@@ -25,38 +27,39 @@ function getClient() {
 
 /**
  * Asks Jev which tier fits this prompt. Returns null on any failure, which the policy
- * layer reads as "keep the current model" — routing must never block a prompt.
+ * layer reads as "keep the current model" — routing must never block a prompt, so
+ * everything, including building the request, happens inside the try.
  *
- * @returns {Promise<?{choice: string, confidence: number, probabilities: object, metrics: object, ms: number}>}
+ * @param {object} input
+ * @param {string} input.prompt        user prompt
+ * @param {string} input.current       model currently in use
+ * @param {number} input.contextTokens approximate conversation size
+ * @param {Array<{id: string, tier: string, description?: string}>} input.models
+ * @param {string} [input.taskType]    detected from the prompt when omitted
+ * @returns {Promise<?{choice: string, confidence: number, probabilities: object, metrics: object, taskType: string, ms: number}>}
  */
-export async function askJev({ prompt, current, contextTokens, models }) {
+export async function askJev({ prompt, current, contextTokens, models, taskType }) {
   if (!models?.length) return null;
   const started = Date.now();
   const abort = new AbortController();
   const deadline = setTimeout(() => abort.abort(), THRESHOLDS.jevDeadlineMs);
-  const request = {
-    state: {
-      request: prompt,
-      session: { current_model: current, context_tokens: contextTokens },
-      environment: { available_models: models.map((model) => model.id) },
-    },
-    questions: { ...QUESTIONS, model: questionForModels(models) },
-  };
   try {
-    const result = await getClient().systemOne(request, { signal: abort.signal });
-    const { model: answer, task_complexity, reasoning_required, tool_complexity } = result.answers;
-    return {
-      ...answer,
-      request,
-      response: result,
-      metrics: {
-        taskComplexity: task_complexity.score / COMPLEXITY_MAX_SCORE,
-        reasoningRequired: reasoning_required.score / COMPLEXITY_MAX_SCORE,
-        toolComplexity: tool_complexity.score / COMPLEXITY_MAX_SCORE,
-        contextSize: Math.min(contextTokens / CONTEXT_WINDOW_TOKENS, 1),
+    taskType ??= resolveTaskType(prompt);
+    const request = {
+      state: {
+        request: prompt,
+        session: { current_model: current, context_tokens: contextTokens, task_type: TASK_TYPES[taskType]?.name },
+        environment: { available_models: models.map((model) => model.id) },
       },
-      ms: Date.now() - started,
+      questions: { ...questionsFor(taskType), model: questionForModels(models, taskType) },
     };
+    const result = await getClient().systemOne(request, { signal: abort.signal });
+    const { model: answer, ...scores } = result.answers;
+    const metrics = { contextSize: Math.min(contextTokens / CONTEXT_WINDOW_TOKENS, 1) };
+    for (const [key, value] of Object.entries(scores)) {
+      if (typeof value?.score === "number") metrics[camel(key)] = value.score / COMPLEXITY_MAX_SCORE;
+    }
+    return { ...answer, request, response: result, metrics, taskType, ms: Date.now() - started };
   } catch (err) {
     log(`routing failed, keeping ${current}: ${err.message}`);
     return null;
@@ -64,3 +67,15 @@ export async function askJev({ prompt, current, contextTokens, models }) {
     clearTimeout(deadline);
   }
 }
+
+/** Calls a routing function, turning any error into "no answer" so the current model is kept. */
+export async function routeSafely(route, input) {
+  try {
+    return await route(input);
+  } catch (err) {
+    log(`routing failed, keeping ${input.current}: ${err.message}`);
+    return null;
+  }
+}
+
+const camel = (key) => key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());

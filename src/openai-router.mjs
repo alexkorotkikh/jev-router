@@ -9,44 +9,59 @@ import {
 } from "./config.mjs";
 import { log } from "./log.mjs";
 
-export const OPENAI_DEFAULT_MODEL = "gpt-5-mini";
+/** The only model the Decisions API supports today. */
+export const OPENAI_DEFAULT_MODEL = "gpt-6-luna";
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 /** A dedicated key wins so a Codex session's own auth is never confused with the router's. */
 export const openaiKey = () => process.env.JEV_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
 
-const SYSTEM_PROMPT = [
-  "You are a model router for an AI coding assistant.",
-  "Read the user's request and session state, answer every scored question on its rubric",
-  "(integer index into the rubric, 0 is the lowest), then pick exactly one model id from the",
-  "allowed list following the model question's instructions and per-model guidance.",
-  "Report your confidence in the model choice as a number from 0 to 1.",
-  "Do not perform the request. Reply with JSON only.",
-].join(" ");
+const text = (value) => (Array.isArray(value) ? value.join(" ") : String(value));
 
-/** JSON schema for the structured reply, so the model can only name an available model id. */
-function replySchema(scores, modelIds) {
-  const properties = {
-    model: { type: "string", enum: modelIds },
-    confidence: { type: "number" },
-  };
-  for (const [key, question] of Object.entries(scores)) {
-    // Range goes in the description and is clamped on read; not every model supports
-    // minimum/maximum under strict structured outputs.
-    properties[key] = { type: "integer", description: `0 to ${question.criteria.length - 1}` };
-  }
-  return {
-    name: "routing_decision",
-    strict: true,
-    schema: { type: "object", additionalProperties: false, properties, required: Object.keys(properties) },
-  };
+/** Flattens a Jev choice criterion ({model, what, signals, not_for}) into one description. */
+const describe = ({ model, what, signals, not_for }) =>
+  [model, what && `For: ${what}`, signals?.length && `Signals: ${signals.join("; ")}`, not_for && `Not for: ${not_for}`]
+    .filter(Boolean)
+    .join(" ");
+
+/** Translates the Jev-shaped questions built in config.mjs into Decisions API questions. */
+export function toDecisionQuestions(questions) {
+  return Object.entries(questions).map(([name, question]) =>
+    question.type === "choice"
+      ? {
+          type: "choice",
+          name,
+          instructions: text(question.instructions),
+          choices: Object.entries(question.criteria).map(([value, criterion]) => ({
+            value,
+            description: describe(criterion),
+          })),
+        }
+      : {
+          type: "score",
+          name,
+          instructions: text(question.instructions),
+          levels: question.criteria.map((label) => ({ label })),
+        },
+  );
 }
 
-const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+/** The routing state as plain text, the Decisions API's shared evidence for every question. */
+const decisionInput = ({ request, session, environment }) =>
+  [
+    `User request to an AI coding assistant:\n${request}`,
+    `Current model: ${session.current_model}`,
+    `Conversation size: ~${session.context_tokens} tokens`,
+    `Task type: ${session.task_type ?? "unknown"}`,
+    `Available models: ${environment.available_models.join(", ")}`,
+  ].join("\n\n");
+
+/** Decisions API probabilities arrive as [{value, probability}]; Jev uses {value: probability}. */
+const probabilityMap = (list = []) => Object.fromEntries(list.map(({ value, probability }) => [value, probability]));
 
 /**
- * Same contract as askJev, answered by an OpenAI chat model instead of TypeSafe Jev. Returns
- * null on any failure so the policy layer keeps the current model.
+ * Same contract as askJev, answered by OpenAI's Decisions API (POST /v1/decisions) instead of
+ * TypeSafe Jev. Returns null on any failure so the policy layer keeps the current model.
  */
 export async function askOpenAI({ prompt, current, contextTokens, models, taskType }) {
   if (!models?.length) return null;
@@ -57,48 +72,53 @@ export async function askOpenAI({ prompt, current, contextTokens, models, taskTy
     const key = openaiKey();
     if (!key) throw new Error("no OPENAI_API_KEY or JEV_OPENAI_API_KEY set");
     taskType ??= resolveTaskType(prompt);
-    const scores = questionsFor(taskType);
     const request = {
       state: {
         request: prompt,
         session: { current_model: current, context_tokens: contextTokens, task_type: TASK_TYPES[taskType]?.name },
         environment: { available_models: models.map((model) => model.id) },
       },
-      questions: { ...scores, model: questionForModels(models, taskType) },
+      questions: { ...questionsFor(taskType), model: questionForModels(models, taskType) },
     };
-    const model = process.env.JEV_OPENAI_MODEL || OPENAI_DEFAULT_MODEL;
-    const effort = process.env.JEV_OPENAI_REASONING_EFFORT ?? (/^(gpt-5|o\d)/.test(model) ? "minimal" : "");
     const body = {
-      model,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: JSON.stringify(request) },
-      ],
-      response_format: { type: "json_schema", json_schema: replySchema(scores, request.state.environment.available_models) },
-      ...(effort ? { reasoning_effort: effort } : {}),
+      model: process.env.JEV_OPENAI_MODEL || OPENAI_DEFAULT_MODEL,
+      input: decisionInput(request.state),
+      questions: toDecisionQuestions(request.questions),
     };
     const base = (process.env.JEV_OPENAI_BASE_URL || OPENAI_DEFAULT_BASE_URL).replace(/\/$/, "");
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await fetch(`${base}/decisions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
       signal: abort.signal,
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const completion = await res.json();
-    const reply = JSON.parse(completion.choices?.[0]?.message?.content ?? "null");
-    if (!reply || !models.some((m) => m.id === reply.model)) throw new Error("OpenAI returned no valid model");
+    const decision = await res.json();
 
-    const confidence = clamp(Number(reply.confidence) || 0, 0, 1);
-    const answers = { model: { type: "choice", choice: reply.model, confidence, probabilities: { [reply.model]: confidence } } };
-    const metrics = { contextSize: Math.min(contextTokens / CONTEXT_WINDOW_TOKENS, 1) };
-    for (const [name, question] of Object.entries(scores)) {
-      const value = clamp(Math.round(Number(reply[name]) || 0), 0, question.criteria.length - 1);
-      answers[name] = { type: "score", score: value, confidence };
-      metrics[camel(name)] = value / COMPLEXITY_MAX_SCORE;
+    const answers = {};
+    for (const answer of decision.answers ?? []) {
+      if (answer.type === "refusal") continue;
+      answers[answer.name] = { ...answer, probabilities: probabilityMap(answer.probabilities) };
     }
-    const response = { answers, model: completion.model, usage: completion.usage };
-    return { ...answers.model, request, response, metrics, taskType, ms: Date.now() - started };
+    const choice = answers.model;
+    if (choice?.type !== "choice" || !models.some((m) => m.id === choice.choice)) {
+      throw new Error("OpenAI returned no valid model");
+    }
+    const metrics = { contextSize: Math.min(contextTokens / CONTEXT_WINDOW_TOKENS, 1) };
+    for (const [name, answer] of Object.entries(answers)) {
+      if (answer.type === "score") metrics[camel(name)] = answer.score / COMPLEXITY_MAX_SCORE;
+    }
+    const response = { answers, model: decision.model, usage: decision.usage };
+    return {
+      choice: choice.choice,
+      confidence: choice.confidence,
+      probabilities: choice.probabilities,
+      request,
+      response,
+      metrics,
+      taskType,
+      ms: Date.now() - started,
+    };
   } catch (err) {
     log(`openai routing failed, keeping ${current}: ${err.message}`);
     return null;

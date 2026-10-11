@@ -12,7 +12,7 @@ for (const file of [".env", `${homedir()}/.jev-router.env`]) {
 }
 const { askRouter, routerName, takeRouterFlags } = await import("../src/router.mjs");
 takeRouterFlags(process.argv.slice(2));
-console.log(`router: ${routerName()}${routerName() === "openai" ? ` (${process.env.JEV_OPENAI_MODEL || "gpt-5-mini"})` : ""}\n`);
+console.log(`router: ${routerName()}${routerName() === "openai" ? ` (${process.env.JEV_OPENAI_MODEL || "gpt-6-luna"})` : ""}\n`);
 const { TIERS } = await import("../src/config.mjs");
 
 const models = TIERS.map(({ id, name }) => ({ id, tier: name }));

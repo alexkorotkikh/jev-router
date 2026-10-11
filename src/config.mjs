@@ -64,8 +64,8 @@ export const THRESHOLDS = {
   jevTimeoutMs: 1500,
   jevDeadlineMs: 3000,
   jevMaxRetries: 1,
-  /** Deadline for the OpenAI routing backend; a chat completion is slower than Jev. */
-  openaiDeadlineMs: 8000,
+  /** Deadline for the OpenAI Decisions API backend; measured ~100-450ms warm, ~1.2s cold. */
+  openaiDeadlineMs: 3000,
 };
 
 /**

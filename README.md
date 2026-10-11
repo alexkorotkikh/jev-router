@@ -153,7 +153,7 @@ concrete model pauses routing; selecting **Jev Router** resumes it.
 Each fresh decision appears as Codex commentary:
 
 ```text
-[Jev] routed this turn to gpt-5.6-sol (jev, confidence 0.91).
+[Jev] routed this turn to gpt-6-sol (jev, confidence 0.91).
 ```
 
 `jev-codex` installs or refreshes the packaged `$jev-explain` skill when it starts, so it is
@@ -209,9 +209,9 @@ One Jev call per fresh user turn selects a shared abstract tier:
 
 | Tier | Claude Code default | Codex default |
 | --- | --- | --- |
-| Fast | Haiku | `gpt-5.6-luna` |
-| Balanced | Sonnet | `gpt-5.6-terra` |
-| Strong | Opus | `gpt-5.6-sol` |
+| Fast | Haiku | `gpt-6-luna` |
+| Balanced | Sonnet | `gpt-6-terra` |
+| Strong | Opus | `gpt-6-sol` |
 | Long | Fable | `gpt-6-astra` |
 
 `src/policy.mjs` then applies these rules:
@@ -257,9 +257,9 @@ without the flag.
 | `JEV_DEBUG` | Both | Logs decisions and rewrites to `~/.jev-claude.log` in interactive sessions. |
 | `JEV_DUMP` | Both | Dumps request bodies for debugging wire-format changes. |
 | `JEV_NO_STATUSLINE` | Claude | Disables the injected Claude status line. |
-| `JEV_CODEX_FAST_MODEL` | Codex | Fast model; defaults to `gpt-5.6-luna`. |
-| `JEV_CODEX_BALANCED_MODEL` | Codex | Balanced model; defaults to `gpt-5.6-terra`. |
-| `JEV_CODEX_STRONG_MODEL` | Codex | Strong model; defaults to `gpt-5.6-sol`. |
+| `JEV_CODEX_FAST_MODEL` | Codex | Fast model; defaults to `gpt-6-luna`. |
+| `JEV_CODEX_BALANCED_MODEL` | Codex | Balanced model; defaults to `gpt-6-terra`. |
+| `JEV_CODEX_STRONG_MODEL` | Codex | Strong model; defaults to `gpt-6-sol`. |
 | `JEV_CODEX_LONG_MODEL` | Codex | Long model; defaults to `gpt-6-astra`. |
 | `JEV_OPENCODE_PROVIDER` | OpenCode | Connected provider whose models Jev may route among. |
 | `JEV_OPENCODE_FAST_MODEL` | OpenCode | Exact fast model as `provider/model`. |

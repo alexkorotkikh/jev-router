@@ -9,6 +9,7 @@ import {
   THRESHOLDS,
 } from "./config.mjs";
 import { log } from "./log.mjs";
+import { askOpenAI, openaiKey } from "./openai-router.mjs";
 
 // The SDK's defaults (10s per attempt, 2 retries, no total budget) are far too slow for a
 // per-prompt hot path, so the timeout, retry count and an outer deadline are all pinned.
@@ -66,6 +67,55 @@ export async function askJev({ prompt, current, contextTokens, models, taskType 
   } finally {
     clearTimeout(deadline);
   }
+}
+
+export const ROUTERS = ["jev", "openai"];
+
+/** Routing backend for this session: `--router` on the CLI sets JEV_ROUTER for the child too. */
+export const routerName = () => (process.env.JEV_ROUTER === "openai" ? "openai" : "jev");
+
+/** Whether the selected backend has the credentials it needs to route. */
+export const routerConfigured = () =>
+  routerName() === "openai"
+    ? Boolean(openaiKey())
+    : Boolean(process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY);
+
+/** Hint naming the key the selected backend is missing. */
+export const missingKeyHint = () =>
+  routerName() === "openai" ? "OPENAI_API_KEY" : "JEV_API_KEY";
+
+/** Routes with whichever backend this session selected. */
+export const askRouter = (input) => (routerName() === "openai" ? askOpenAI(input) : askJev(input));
+
+/**
+ * Removes jev-router's own flags from argv before it is forwarded to the upstream CLI:
+ * `--router <jev|openai>` / `--router=<…>` and `--router-model <id>` / `--router-model=<id>`.
+ * Values are exported as JEV_ROUTER / JEV_OPENAI_MODEL so the proxy and OpenCode plugin,
+ * which may run in the child process, see the same choice.
+ */
+export function takeRouterFlags(args, env = process.env) {
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") {
+      rest.push(...args.slice(i));
+      break;
+    }
+    const match = /^--(router|router-model)(?:=(.*))?$/.exec(arg);
+    if (!match) {
+      rest.push(arg);
+      continue;
+    }
+    const value = match[2] ?? args[++i];
+    if (!value) throw new Error(`--${match[1]} needs a value`);
+    if (match[1] === "router") {
+      if (!ROUTERS.includes(value)) throw new Error(`--router must be one of ${ROUTERS.join(", ")}, got "${value}"`);
+      env.JEV_ROUTER = value;
+    } else {
+      env.JEV_OPENAI_MODEL = value;
+    }
+  }
+  return rest;
 }
 
 /** Calls a routing function, turning any error into "no answer" so the current model is kept. */

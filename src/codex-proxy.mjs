@@ -3,7 +3,7 @@ import https from "node:https";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { availableTiers, shouldUseExactModel } from "./config.mjs";
-import { askJev, routeSafely } from "./router.mjs";
+import { askRouter, missingKeyHint, routeSafely } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
 import { writeDecision, writeStatus } from "./status.mjs";
@@ -144,7 +144,7 @@ export function jevDecisionEvents({ tier, model = codexModelOf(tier), confidence
   const detail = confidence == null ? reason : `${reason}, confidence ${confidence.toFixed(2)}`;
   const id = `jev-${randomUUID()}`;
   const text = reason.startsWith("jev-unavailable")
-    ? `[Jev] unavailable; using ${model}. Add JEV_API_KEY=... to ~/.jev-router.env and restart jev-codex.`
+    ? `[Jev] unavailable; using ${model}. Add ${missingKeyHint()}=... to ~/.jev-router.env and restart jev-codex.`
     : `[Jev] routed this turn to ${model} (${detail}).`;
   const item = {
     type: "message",
@@ -167,7 +167,7 @@ const upstreamPath = (base, path) => `${new URL(base).pathname.replace(/\/$/, ""
 export async function startCodexProxy({
   chatgptBaseURL = CHATGPT_BASE_URL,
   apiBaseURL = API_BASE_URL,
-  route = askJev,
+  route = askRouter,
   statusId = "",
 } = {}) {
   const states = new Map();

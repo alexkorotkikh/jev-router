@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnv } from "./codex-cli.mjs";
 import { addOpenCodeProvider } from "./opencode-plugin.mjs";
+import { missingKeyHint, routerConfigured, routerName, takeRouterFlags } from "./router.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PLUGIN_URL = pathToFileURL(join(ROOT, "opencode-plugin")).href;
@@ -67,6 +68,14 @@ export function opencodeArgs(args) {
 
 export async function runOpenCode() {
   loadEnv();
+  let args;
+  try {
+    args = takeRouterFlags(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`[jev] ${err.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const command = resolveOpenCode();
   if (!command) {
     process.stderr.write(
@@ -78,9 +87,8 @@ export async function runOpenCode() {
     return;
   }
 
-  let args = process.argv.slice(2);
   const env = { ...process.env };
-  if (env.JEV_API_KEY || env.TYPESAFE_API_KEY) {
+  if (routerConfigured()) {
     if (args.includes("--server")) {
       process.stderr.write(
         "[jev] --server uses a remote OpenCode service, so local Jev routing is unavailable; " +
@@ -92,8 +100,8 @@ export async function runOpenCode() {
     }
   } else {
     process.stderr.write(
-      "[jev] no JEV_API_KEY found - starting OpenCode without routing\n" +
-      `[jev] add JEV_API_KEY=... to ${join(homedir(), ".jev-router.env")} and restart jev-opencode\n`,
+      `[jev] no ${missingKeyHint()} found - starting OpenCode without ${routerName()} routing\n` +
+      `[jev] add it to ${join(homedir(), ".jev-router.env")} and restart jev-opencode\n`,
     );
   }
 

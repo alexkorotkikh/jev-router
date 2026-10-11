@@ -228,9 +228,29 @@ sub-agents are pinned separately. Routing is fail-open: Jev failure never blocks
 
 ## Configuration
 
+### Routing backend
+
+By default, TypeSafe Jev makes the routing decision. Pass `--router openai` to any launcher to
+have an OpenAI model decide instead; it gets the same questions, task-type guidance, and policy
+thresholds. The flag is consumed by jev-router and not forwarded to the upstream CLI.
+
+```bash
+echo "OPENAI_API_KEY=..." >> ~/.jev-router.env
+jev-claude --router openai
+jev-codex --router openai --router-model gpt-5-mini
+```
+
+`--router-model` (or `JEV_OPENAI_MODEL`) picks the decision model; the default is `gpt-5-mini`.
+`JEV_ROUTER=openai` selects the backend without the flag.
+
 | Variable | Interface | Effect |
 | --- | --- | --- |
 | `JEV_API_KEY` | Both | Enables routing. `TYPESAFE_API_KEY` also works. |
+| `JEV_ROUTER` | All | Routing backend: `jev` (default) or `openai`. Same as `--router`. |
+| `OPENAI_API_KEY` | All | Enables routing with `--router openai`. `JEV_OPENAI_API_KEY` takes precedence. |
+| `JEV_OPENAI_MODEL` | All | Decision model for `--router openai`; defaults to `gpt-5-mini`. Same as `--router-model`. |
+| `JEV_OPENAI_BASE_URL` | All | OpenAI-compatible API base; defaults to `https://api.openai.com/v1`. |
+| `JEV_OPENAI_REASONING_EFFORT` | All | `reasoning_effort` sent to the decision model; `minimal` for GPT-5/o-series, empty to omit. |
 | `JEV_ALLOW_FABLE` | Both | Enables the opt-in long tier. |
 | `JEV_DEBUG` | Both | Logs decisions and rewrites to `~/.jev-claude.log` in interactive sessions. |
 | `JEV_DUMP` | Both | Dumps request bodies for debugging wire-format changes. |

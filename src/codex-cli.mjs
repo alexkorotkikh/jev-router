@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODEX_AUTO_MODEL, startCodexProxy } from "./codex-proxy.mjs";
+import { missingKeyHint, routerConfigured, routerName, takeRouterFlags } from "./router.mjs";
 
 const PROVIDER = "jev";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -73,6 +74,14 @@ export const codexArgs = (baseURL, args) => [
 // Loads configuration, starts the optional routing proxy, and launches the Codex CLI.
 export async function runCodex() {
   loadEnv();
+  let args;
+  try {
+    args = takeRouterFlags(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`[jev] ${err.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
   try {
     installCodexSkill();
   } catch (err) {
@@ -89,18 +98,17 @@ export async function runCodex() {
     return;
   }
 
-  let args = process.argv.slice(2);
   let close = () => {};
   const statusId = `codex-${process.pid}`;
   process.env.JEV_CODEX_STATUS_ID = statusId;
-  if (process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY) {
+  if (routerConfigured()) {
     const proxy = await startCodexProxy({ statusId });
     close = proxy.close;
     args = codexArgs(`http://127.0.0.1:${proxy.port}`, args);
   } else {
     process.stderr.write(
-      "[jev] no JEV_API_KEY found - starting Codex without routing\n" +
-        `[jev] add JEV_API_KEY=... to ${join(homedir(), ".jev-router.env")} and restart jev-codex\n`,
+      `[jev] no ${missingKeyHint()} found - starting Codex without ${routerName()} routing\n` +
+        `[jev] add it to ${join(homedir(), ".jev-router.env")} and restart jev-codex\n`,
     );
   }
 

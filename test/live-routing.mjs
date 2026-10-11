@@ -1,12 +1,18 @@
-// Manual check against the live Jev API (needs JEV_API_KEY): node test/live-routing.mjs
+// Manual check against the live routing backend: node test/live-routing.mjs [--router openai]
+// (needs JEV_API_KEY, or OPENAI_API_KEY with --router openai).
 // Prints the detected task type, Jev's choice and the tier we would expect, so prompt and
 // guidance changes can be judged on real answers. Not part of `npm test`.
-try {
-  process.loadEnvFile();
-} catch {
-  // No .env; the key may still come from the real environment.
+const { homedir } = await import("node:os");
+for (const file of [".env", `${homedir()}/.jev-router.env`]) {
+  try {
+    process.loadEnvFile(file);
+  } catch {
+    // Missing; the key may still come from the real environment.
+  }
 }
-const { askJev } = await import("../src/router.mjs");
+const { askRouter, routerName, takeRouterFlags } = await import("../src/router.mjs");
+takeRouterFlags(process.argv.slice(2));
+console.log(`router: ${routerName()}${routerName() === "openai" ? ` (${process.env.JEV_OPENAI_MODEL || "gpt-5-mini"})` : ""}\n`);
 const { TIERS } = await import("../src/config.mjs");
 
 const models = TIERS.map(({ id, name }) => ({ id, tier: name }));
@@ -31,7 +37,7 @@ const cases = [
 
 let matches = 0;
 for (const [prompt, expected] of cases) {
-  const a = await askJev({ prompt, current: models.find((m) => m.tier === "sonnet").id, contextTokens: 0, models });
+  const a = await askRouter({ prompt, current: models.find((m) => m.tier === "sonnet").id, contextTokens: 0, models });
   if (!a) {
     console.log(`FAIL  ${prompt}`);
     continue;

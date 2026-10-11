@@ -1,6 +1,6 @@
 import { availableTiers, shouldUseExactModel } from "./config.mjs";
 import { decide } from "./policy.mjs";
-import { askJev, routeSafely } from "./router.mjs";
+import { askRouter, routeSafely } from "./router.mjs";
 import { writeDecision } from "./status.mjs";
 
 export const OPENCODE_PROVIDER = "jev";
@@ -223,7 +223,7 @@ async function chooseOpenCodeModel({ prompt, contextTokens, models, previous, ro
   return { selected, jev, decision, taskType: jev?.taskType ?? null };
 }
 
-export function createOpenCodePlugin({ route = askJev } = {}) {
+export function createOpenCodePlugin({ route = askRouter } = {}) {
   return async ({ client }) => {
     const states = new Map();
     return {
@@ -292,7 +292,7 @@ export function createOpenCodePlugin({ route = askJev } = {}) {
 }
 
 /** OpenCode v2 setup hook. Prompt admission occurs before the session resolves its model. */
-export function createOpenCodeV2Plugin({ route = askJev } = {}) {
+export function createOpenCodeV2Plugin({ route = askRouter } = {}) {
   return async (ctx) => {
     const states = new Map();
     const registration = await ctx.session.hook("prompt", async (event) => {
